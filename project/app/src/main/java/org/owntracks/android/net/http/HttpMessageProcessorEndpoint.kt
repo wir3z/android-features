@@ -24,6 +24,7 @@ import org.owntracks.android.data.repos.EndpointStateRepo
 import org.owntracks.android.di.ApplicationScope
 import org.owntracks.android.di.CoroutineScopes
 import org.owntracks.android.model.messages.MessageBase
+import org.owntracks.android.model.messages.MessageCard
 import org.owntracks.android.model.messages.MessageLocation
 import org.owntracks.android.net.CALeafCertMatchingHostnameVerifier
 import org.owntracks.android.net.MessageProcessorEndpoint
@@ -183,13 +184,12 @@ class HttpMessageProcessorEndpoint(
       return
     }
     Timber.v("HTTP preferences changed: [${properties.joinToString(",")}]")
-    val propertiesWeCareAbout =
-        setOf(
-            Preferences::url.name,
-            Preferences::username.name,
-            Preferences::password.name,
-            Preferences::deviceId.name,
-            Preferences::tlsClientCrt.name)
+    /* In HTTP mode, the *only* preference we care about wanting to trigger an immediate reprocessing
+     * of the outgoing message queue is the password. The other properties that might change the
+     * liklihood of message sends succeeding (e.g. URL, username etc.) will actually trigger a
+     * queue wipe and full reset, and that's handled in the [MessageProcessor].
+     */
+    val propertiesWeCareAbout = setOf(Preferences::password.name)
 
     if (propertiesWeCareAbout.intersect(properties).isNotEmpty()) {
       scope.launch(ioDispatcher) {
@@ -208,6 +208,7 @@ class HttpMessageProcessorEndpoint(
       context: Context,
       preferences: Preferences
   ): HttpClientAndConfiguration {
+    Timber.v("Creating new HTTP client and configuration")
     val httpConfiguration = getEndpointConfiguration()
 
     val hostnameVerifier = CALeafCertMatchingHostnameVerifier()
@@ -233,8 +234,16 @@ class HttpMessageProcessorEndpoint(
 
   override fun onFinalizeMessage(message: MessageBase): MessageBase {
     // Build pseudo topic based on tid
-    if (message is MessageLocation) {
-      message.topic = HTTPTOPIC + message.trackerId
+    when (message) {
+      is MessageLocation -> {
+        message.topic = HTTPTOPIC + message.trackerId
+      }
+      is MessageCard -> {
+        message.topic = HTTPTOPIC + message.trackerId
+      }
+      else -> {
+        message.topic = "NOKEY"
+      }
     }
     return message
   }
